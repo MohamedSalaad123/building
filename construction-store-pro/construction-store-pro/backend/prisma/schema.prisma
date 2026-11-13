@@ -1,0 +1,357 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- ENUMS ----------
+enum MovementType {
+  STOCK_IN
+  STOCK_OUT
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+  DAMAGED
+  RETURN_IN
+  RETURN_OUT
+  SALE
+  PURCHASE
+}
+enum PaymentMethod {
+  CASH_USD
+  CASH_SOS
+  EVC_PLUS
+  ZAAD
+  SAHAL
+  BANK_TRANSFER
+}
+enum Currency {
+  USD
+  SOS
+}
+enum SaleStatus {
+  COMPLETED
+  PARTIAL
+  CREDIT
+  CANCELLED
+}
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  RECEIVED
+  CANCELLED
+}
+enum PayStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+enum CustomerType {
+  RETAIL
+  WHOLESALE
+  CONTRACTOR
+}
+enum ReturnType {
+  SALE
+  PURCHASE
+}
+
+// ---------- AUTH ----------
+model Role {
+  id          Int              @id @default(autoincrement())
+  name        String           @unique // ADMIN, MANAGER, CASHIER
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id    Int              @id @default(autoincrement())
+  code  String           @unique // e.g. product.create, sale.refund
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  @@id([roleId, permissionId])
+}
+
+model User {
+  id           Int        @id @default(autoincrement())
+  fullName     String
+  username     String     @unique
+  passwordHash String
+  roleId       Int
+  language     String     @default("so")
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  role         Role       @relation(fields: [roleId], references: [id])
+  sales        Sale[]
+  purchases    Purchase[]
+  movements    StockMovement[]
+  expenses     Expense[]
+  auditLogs    AuditLog[]
+}
+
+// ---------- CATALOG ----------
+model Category {
+  id       Int       @id @default(autoincrement())
+  nameSo   String
+  nameEn   String
+  products Product[]
+}
+
+model Unit {
+  id          Int              @id @default(autoincrement())
+  nameSo      String           // Kiish, Xabbo...
+  nameEn      String           // Bag, Piece...
+  symbol      String
+  products    Product[]
+  fromConv    UnitConversion[] @relation("from")
+  toConv      UnitConversion[] @relation("to")
+}
+
+model UnitConversion {
+  id         Int     @id @default(autoincrement())
+  fromUnitId Int
+  toUnitId   Int
+  factor     Decimal @db.Decimal(18, 6)
+  from       Unit    @relation("from", fields: [fromUnitId], references: [id])
+  to         Unit    @relation("to", fields: [toUnitId], references: [id])
+  @@unique([fromUnitId, toUnitId])
+}
+
+model Warehouse {
+  id        Int         @id @default(autoincrement())
+  name      String
+  location  String?
+  inventory Inventory[]
+}
+
+model Product {
+  id            Int      @id @default(autoincrement())
+  sku           String   @unique
+  barcode       String?  @unique
+  nameSo        String
+  nameEn        String
+  categoryId    Int
+  unitId        Int
+  brand         String?
+  purchasePrice Decimal  @db.Decimal(14, 2)  // USD base
+  sellingPrice  Decimal  @db.Decimal(14, 2)
+  wholesalePrice Decimal @db.Decimal(14, 2)
+  avgCost       Decimal  @default(0) @db.Decimal(14, 4) // weighted average, used for COGS
+  minStock      Decimal  @default(0) @db.Decimal(14, 3)
+  imageUrl      String?  @db.MediumText
+  description   String?  @db.Text
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  category      Category @relation(fields: [categoryId], references: [id])
+  unit          Unit     @relation(fields: [unitId], references: [id])
+  inventory     Inventory[]
+  movements     StockMovement[]
+  saleItems     SaleItem[]
+  purchaseItems PurchaseItem[]
+  @@index([nameEn])
+  @@index([nameSo])
+}
+
+model Inventory {
+  id          Int       @id @default(autoincrement())
+  productId   Int
+  warehouseId Int
+  quantity    Decimal   @default(0) @db.Decimal(14, 3)
+  product     Product   @relation(fields: [productId], references: [id])
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  @@unique([productId, warehouseId])
+}
+
+model StockMovement {
+  id          Int          @id @default(autoincrement())
+  productId   Int
+  warehouseId Int
+  type        MovementType
+  quantity    Decimal      @db.Decimal(14, 3) // signed: + in, - out
+  unitCost    Decimal?     @db.Decimal(14, 4)
+  reference   String       // INV-000125, PO-000010...
+  notes       String?
+  userId      Int
+  createdAt   DateTime     @default(now())
+  product     Product      @relation(fields: [productId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  @@index([productId, createdAt])
+  @@index([reference])
+}
+
+// ---------- PARTIES ----------
+model Customer {
+  id       Int          @id @default(autoincrement())
+  fullName String
+  phone    String?
+  address  String?
+  type     CustomerType @default(RETAIL)
+  createdAt DateTime    @default(now())
+  sales    Sale[]
+  @@index([phone])
+}
+
+model Supplier {
+  id        Int        @id @default(autoincrement())
+  name      String
+  phone     String?
+  address   String?
+  company   String?
+  purchases Purchase[]
+}
+
+// ---------- SALES ----------
+model Sale {
+  id             Int         @id @default(autoincrement())
+  invoiceNo      String      @unique
+  idempotencyKey String      @unique // prevents duplicate transactions
+  customerId     Int?
+  cashierId      Int
+  currency       Currency    @default(USD)
+  exchangeRate   Decimal     @db.Decimal(14, 4) // SOS per 1 USD at sale date
+  subtotal       Decimal     @db.Decimal(14, 2)
+  discount       Decimal     @default(0) @db.Decimal(14, 2)
+  tax            Decimal     @default(0) @db.Decimal(14, 2)
+  total          Decimal     @db.Decimal(14, 2)
+  cogs           Decimal     @db.Decimal(14, 2)
+  amountPaid     Decimal     @default(0) @db.Decimal(14, 2)
+  status         SaleStatus
+  createdAt      DateTime    @default(now())
+  customer       Customer?   @relation(fields: [customerId], references: [id])
+  cashier        User        @relation(fields: [cashierId], references: [id])
+  items          SaleItem[]
+  payments       SalePayment[]
+  @@index([createdAt])
+}
+
+model SaleItem {
+  id        Int     @id @default(autoincrement())
+  saleId    Int
+  productId Int
+  quantity  Decimal @db.Decimal(14, 3)
+  unitPrice Decimal @db.Decimal(14, 2)
+  unitCost  Decimal @db.Decimal(14, 4) // cost snapshot for accurate profit
+  discount  Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal Decimal @db.Decimal(14, 2)
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model SalePayment {
+  id           Int           @id @default(autoincrement())
+  saleId       Int
+  method       PaymentMethod
+  currency     Currency
+  amount       Decimal       @db.Decimal(14, 2)
+  amountUsd    Decimal       @db.Decimal(14, 2)
+  exchangeRate Decimal       @db.Decimal(14, 4)
+  createdAt    DateTime      @default(now())
+  sale         Sale          @relation(fields: [saleId], references: [id])
+}
+
+// ---------- PURCHASES ----------
+model Purchase {
+  id          Int            @id @default(autoincrement())
+  poNumber    String         @unique
+  supplierInvoiceNo String?
+  supplierId  Int
+  userId      Int
+  status      PurchaseStatus @default(DRAFT)
+  payStatus   PayStatus      @default(UNPAID)
+  total       Decimal        @db.Decimal(14, 2)
+  amountPaid  Decimal        @default(0) @db.Decimal(14, 2)
+  createdAt   DateTime       @default(now())
+  supplier    Supplier       @relation(fields: [supplierId], references: [id])
+  user        User           @relation(fields: [userId], references: [id])
+  items       PurchaseItem[]
+  payments    PurchasePayment[]
+}
+
+model PurchaseItem {
+  id          Int      @id @default(autoincrement())
+  purchaseId  Int
+  productId   Int
+  quantity    Decimal  @db.Decimal(14, 3)
+  receivedQty Decimal  @default(0) @db.Decimal(14, 3)
+  unitCost    Decimal  @db.Decimal(14, 4)
+  lineTotal   Decimal  @db.Decimal(14, 2)
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [productId], references: [id])
+}
+
+model PurchasePayment {
+  id         Int           @id @default(autoincrement())
+  purchaseId Int
+  method     PaymentMethod
+  amountUsd  Decimal       @db.Decimal(14, 2)
+  createdAt  DateTime      @default(now())
+  purchase   Purchase      @relation(fields: [purchaseId], references: [id])
+}
+
+// ---------- EXPENSES ----------
+model ExpenseCategory {
+  id       Int       @id @default(autoincrement())
+  nameSo   String
+  nameEn   String
+  expenses Expense[]
+}
+
+model Expense {
+  id         Int             @id @default(autoincrement())
+  categoryId Int
+  userId     Int
+  amountUsd  Decimal         @db.Decimal(14, 2)
+  method     PaymentMethod
+  notes      String?
+  spentAt    DateTime        @default(now())
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+  @@index([spentAt])
+}
+
+// ---------- RETURNS ----------
+model Return {
+  id        Int        @id @default(autoincrement())
+  type      ReturnType
+  refId     Int        // saleId or purchaseId
+  productId Int
+  quantity  Decimal    @db.Decimal(14, 3)
+  refundUsd Decimal    @db.Decimal(14, 2)
+  reason    String?
+  createdAt DateTime   @default(now())
+}
+
+// ---------- SYSTEM ----------
+model ExchangeRate {
+  id        Int      @id @default(autoincrement())
+  sosPerUsd Decimal  @db.Decimal(14, 4)
+  effectiveOn DateTime
+  @@index([effectiveOn])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  action    String   // e.g. SALE_CREATED, PRODUCT_UPDATED
+  entity    String
+  entityId  String?
+  details   Json?
+  ip        String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  key   String @id
+  value String @db.Text
+}

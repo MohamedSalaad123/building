@@ -1,0 +1,26 @@
+require('dotenv').config();
+const express = require('express'), cors = require('cors');
+const { auth } = require('./middleware/auth');
+const app = express();
+app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+app.use(express.json({ limit: '2mb' }));
+app.get('/api/health', (q, s) => s.json({ ok: true }));
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api', auth);
+app.get('/api/me', (q, s) => s.json(q.user));
+app.use('/api/products', require('./routes/products'));
+app.use('/api/inventory', require('./routes/inventory'));
+app.use('/api/sales', require('./routes/sales'));
+app.use('/api/purchases', require('./routes/purchases'));
+app.use('/api/expenses', require('./routes/expenses'));
+app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/reports', require('./routes/reports'));
+app.use('/api', require('./routes/parties'));
+app.use('/api', require('./routes/misc'));
+app.use((err, req, res, next) => {
+  if (err.code === 'P2002') return res.status(409).json({ error: 'Duplicate value (SKU / barcode / name already exists)' });
+  if (!err.status) console.error(err);
+  res.status(err.status || 500).json({ error: err.status ? err.message : 'Server error' });
+});
+const port = process.env.PORT || 4000;
+app.listen(port, () => console.log('Construction Store Pro API on :' + port));

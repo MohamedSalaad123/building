@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer components {
+  .card { @apply bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4; }
+  .btn { @apply px-3 py-2 rounded-lg text-sm font-medium transition disabled:opacity-50 inline-flex items-center gap-1 justify-center; }
+  .btn-primary { @apply btn bg-blue-600 text-white hover:bg-blue-700; }
+  .btn-ghost { @apply btn border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700; }
+  .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700; }
+  .input { @apply w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm outline-none focus:ring-2 focus:ring-blue-500; }
+  .tbl { @apply w-full text-sm text-left; }
+  .tbl th { @apply py-2 px-2 font-semibold border-b border-slate-200 dark:border-slate-700 whitespace-nowrap; }
+  .tbl td { @apply py-2 px-2 border-b border-slate-100 dark:border-slate-700/50 whitespace-nowrap; }
+}
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: fixed; inset: 0; background: white; padding: 24px; }
+}
